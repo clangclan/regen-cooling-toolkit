@@ -7,6 +7,7 @@ name = "regencool"
 version = "0.1.0"
 description = "Regenerative-cooling design toolkit for small liquid rocket engines: 1D coolant march, Bartz / Cantera hot gas, 2D channel thermo-elastic sections, channel-size optimization, tolerance and manifold studies."
 readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.11"
 dependencies = ["numpy>=1.24", "scipy>=1.10", "matplotlib>=3.7"]
 

@@ -158,4 +158,4 @@ pytest
 
 ## 라이선스
 
-아직 정하지 않았습니다. 팀에서 정한 뒤 `LICENSE` 파일을 추가합니다.
+[MIT License](LICENSE)
