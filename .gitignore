@@ -1,0 +1,30 @@
+# outputs
+results/
+gas_cache/
+*.png
+*.npz
+*.pkl
+
+# CAD / design data never belongs in this repo
+*.CATPart
+*.CATProduct
+*.CATDrawing
+*.stp
+*.step
+*.igs
+*.iges
+*.stl
+*.x_t
+*.cas
+*.cas.h5
+*.dat.h5
+*.msh
+
+# python
+__pycache__/
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+build/
+dist/

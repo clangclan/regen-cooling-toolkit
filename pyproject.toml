@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "regencool"
+version = "0.1.0"
+description = "Regenerative-cooling design toolkit for small liquid rocket engines: 1D coolant march, Bartz / Cantera hot gas, 2D channel thermo-elastic sections, channel-size optimization, tolerance and manifold studies."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.24", "scipy>=1.10", "matplotlib>=3.7"]
+
+[project.optional-dependencies]
+cantera = ["cantera>=3.0"]
+test = ["pytest>=7"]
+
+[tool.setuptools]
+packages = ["regencool"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

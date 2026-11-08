@@ -1,0 +1,97 @@
+# Generic demo engine (illustrative numbers only — not a real design).
+# ~1 kN class, 25 bar, alcohol / oxidizer, isopropanol regenerative cooling, 24 teardrop channels.
+# Run:  python -m regencool run examples/demo_engine.toml
+# Every key is explained in docs/config_reference.md.
+
+[case]
+name = "demo_engine"
+dx_mm = 0.25            # axial step of the 1D march
+C_hg = 1.0              # multiplier on Bartz h_g (calibrate against test data / CFD when available)
+p_ambient_bar = 1.01325
+
+[contour]               # hot-gas wall, x = 0 at the injector face
+type = "parametric"     # or "csv" with file = "my_contour.csv" (columns x_mm, r_mm)
+r_chamber_mm = 22.0
+r_throat_mm = 9.0
+l_cyl_mm = 70.0
+conv_half_angle_deg = 30.0
+r1_ratio = 1.5          # upstream throat radius / r_throat
+r2_ratio = 1.0          # chamber-to-cone fillet / r_throat
+rn_ratio = 0.382        # downstream throat radius / r_throat
+eps_exit = 5.0
+divergent = "bell"
+theta_n_deg = 25.0
+theta_e_deg = 10.0
+bell_fraction = 0.8
+# rc_throat_mm = 8.5    # throat radius of curvature for Bartz (default 0.5 (R1 + Rn))
+
+[gas]
+model = "ideal"         # "cantera" -> see demo_engine_cantera.toml
+pc_bar = 25.0
+eta_cstar = 0.95        # c* = eta x ideal c*  (or give cstar_m_s directly)
+
+[gas.ideal]
+T0_K = 3100.0
+gamma = 1.21
+MW = 22.5
+# Pr = 0.7              # default Eucken 4 gamma / (9 gamma - 5)
+# mu_Pa_s = 9e-5        # default 1.184e-7 MW^0.5 T0^0.6
+
+[coolant]
+fluid = "isopropanol"   # built-in real-fluid table, or "csv" (see docs/config_reference.md)
+mdot_kg_s = 0.16
+T_in_K = 293.15
+P_in_bar = 60.0         # static pressure at the channel inlet (nozzle-exit end, counterflow)
+roughness_um = 30.0     # additive-manufactured copper: 10..50
+K_in = 0.3
+K_out = 1.5
+
+[channels]
+shape = "tear"          # "rect" | "circ" | "tear"
+n = 24
+t_mm = 1.0              # hot-wall thickness; number or [[x_mm, value], ...]
+s_mm = [[0.0, 1.8], [80.0, 1.5], [98.5, 1.1], [132.0, 0.9]]   # channel size (see docs/2_regen_1d.md)
+rib_mm = 1.0            # rect only: rib width
+web_min_mm = 0.8        # circ/tear: s is reduced locally so that the web between channels stays >= this
+helix_deg = 0.0         # number or [[x_mm, deg], ...]
+land_deg = 0.0          # solid lands (e.g. for bolts / instrumentation) ...
+n_land = 0              # ... how many
+
+[material]              # CuCrZr-like
+E_GPa = 120.0
+nu = 0.33
+alpha_per_K = 17e-6
+k_W_mK = 320.0
+T_ref_K = 293.15
+
+[limits]
+dP_max_bar = 8.0
+# P_min_bar = 48.6      # default: coolant critical pressure + 1 bar
+Twg_max_C = 600.0       # only drawn on the plot
+
+[stress]
+x_mm = ["throat", "max_Twg"]   # 2D thermo-elastic stations
+jacket_mm = 2.0                # closeout thickness above the channels
+h_mm = 0.02                    # FE element size near the channel
+
+[optimize]
+# knots_x_mm = [0, 39, 79, 98.5, 110, 132]   # default: 6 knots from the contour
+maxfev = 150
+robust_d_mm = 0.0       # > 0: optimize for the worst of nominal / +d / -d
+
+[tolerance]
+offsets_mm = [-0.1, -0.05, 0.05, 0.1]
+one_channel_mm = [0.05, 0.1]
+
+[manifold]              # ring header at the nozzle-exit end, inlet at theta = 0
+theta_deg = [0.0, 180.0]
+area_mm2 = [40.0, 20.0]
+dh_mm = [6.0, 4.0]
+R_mean_mm = 26.0
+k_r = 0.8               # momentum regain at each take-off
+C_b = 0.5               # branch entry loss
+d_grid_mm = [-0.15, 0.15, 0.05]   # start, stop, step of the channel-response tables
+mf_grid = [0.5, 1.4, 0.1]
+sigma_mm = [0.025, 0.05]          # per-channel size scatter (normal, std dev)
+mean_mm = [0.0]
+samples = 2000
