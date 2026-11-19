@@ -74,6 +74,8 @@ def solution(case, res, path, Tlim_C=None):
     fig, ax = plt.subplots(3, 2, figsize=(11, 10), sharex=True)
     a = ax[0, 0]
     a.plot(x, res["Twg"] - 273.15, label="Twg (hot wall)")
+    if res.get("axial"):
+        a.plot(x, res["Twg_noax"] - 273.15, color="C0", lw=0.8, ls="--", label="Twg without axial conduction")
     a.plot(x, res["Twc"] - 273.15, label="Twc (coolant wall)")
     a.plot(x, res["Tb"] - 273.15, label="Tb (coolant bulk)")
     if Tlim_C:
@@ -134,6 +136,44 @@ def optimization(case, before, after, path):
         a.set_xlabel("x [mm]")
         a.grid(alpha=0.3)
         a.legend()
+    _save(fig, path)
+
+
+def boiling(case, res, b, path):
+    x = res["x"]
+    fig, ax = plt.subplots(1, 2, figsize=(11, 4.2), sharex=True)
+    ax[0].plot(x, b["Tsat_margin"])
+    ax[0].axhline(0, color="k", lw=0.8, ls=":")
+    ax[0].set_ylabel("Tsat - Twc [K]")
+    ax[1].semilogy(x, np.maximum(b["r_onb"], 1e-3), label="(Twc - Tsat) / dT_ONB")
+    ax[1].semilogy(x, b["r_chf"], label="q_c / q_CHF (Hall-Mudawar)")
+    ax[1].semilogy(x, b["r_chf_bound"], label="q_c / q_CHF (Zuber, lower bound)")
+    ax[1].axhline(1, color="k", lw=0.8, ls=":")
+    ax[1].set_ylabel("ratio")
+    ax[1].legend()
+    for a in ax:
+        _throat(a, case.contour)
+        a.grid(alpha=0.3)
+        a.set_xlabel("x [mm]")
+    _save(fig, path)
+
+
+def radiation(case, res, rads, path):
+    x = res["x"]
+    fig, ax = plt.subplots(1, 2, figsize=(11, 4.2), sharex=True)
+    ax[0].plot(x, res["q"] / 1e6, color="k", label="convective (1D)")
+    for lab, r in rads.items():
+        ax[0].plot(x, r["q_rad"] / 1e6, label="radiation, " + lab)
+        ax[1].plot(x, r["dTwg"], label=lab)
+    ax[0].set_yscale("log")
+    ax[0].set_ylabel("heat flux [MW/m2]")
+    ax[0].legend()
+    ax[1].set_ylabel("Twg rise from radiation [K]")
+    ax[1].legend()
+    for a in ax:
+        _throat(a, case.contour)
+        a.grid(alpha=0.3)
+        a.set_xlabel("x [mm]")
     _save(fig, path)
 
 

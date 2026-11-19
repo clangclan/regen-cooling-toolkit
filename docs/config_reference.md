@@ -17,6 +17,7 @@
 | `dx_mm` | 0.25 | 1D 해석의 축 방향 간격 |
 | `C_hg` | 1.0 | Bartz hg 배율 (시험·CFD로 보정). `--C-hg`가 우선 |
 | `p_ambient_bar` | 1.01325 | 노즐 박리 판정용 주변 압력 |
+| `axial_conduction` | false | 축방향 벽 열전도 결합 ([2.8절](2_regen_1d.md#28-축방향-벽-열전도-axial_conduction--true-또는---axial)). `--axial`이 우선 |
 
 ## `[contour]`
 
@@ -108,6 +109,7 @@
 | `roughness_um` | 30 | 채널 벽 거칠기 |
 | `K_in`, `K_out` | 0.3, 1.5 | 채널 입구·출구 국부 손실계수 (채널 동압 기준) |
 | `property_pressure_bar` | `P_in_bar` | 물성표를 만드는 압력 |
+| `saturation_table` | 없음 (IPA는 내장) | 끓음 판정용 포화 물성 CSV. 열: `P_bar, Tsat_K, hfg_J_kg, rho_l, rho_v, k_l, cp_l, sigma_N_m` |
 
 `fluid = "csv"`:
 
@@ -201,3 +203,36 @@
 | `seed` | 1 | 난수 시드 |
 
 `d_grid_mm`는 Monte Carlo의 ±3σ보다 넓게 잡으세요. 표 밖의 값은 표 끝에서 잘립니다.
+
+## `[radiation]`
+
+`python -m regencool radiation`이 씁니다 ([5장](5_radiation_injector.md)).
+
+| 키 | 기본값 | 의미 |
+|---|---|---|
+| `X_H2O`, `X_CO2` | Cantera 연소실 조성 | H2O, CO2 몰분율. 이상기체 모델이면 필수 |
+| `eps_wall` | 0.8 | 벽 방사율 |
+| `T_clip_K` | 2500 | Leckner 상관식을 평가할 최고 온도 (적합 범위 상한) |
+| `extrapolate` | true | 자르지 않고 외삽한 값도 함께 보고 |
+
+## `[injector]`
+
+`python -m regencool injector`가 씁니다 ([5장](5_radiation_injector.md)). 하위 표 하나가 추진제 하나입니다
+(이름은 자유: `[injector.fuel]`, `[injector.oxidizer]` 등).
+
+| 키 | 기본값 | 의미 |
+|---|---|---|
+| `P_chamber_bar` | `gas.pc_bar` | 하류(연소실) 압력 |
+
+`[injector.<이름>]`:
+
+| 키 | 기본값 | 의미 |
+|---|---|---|
+| `model` | `"spi"` | `"spi"` 비압축 단상, `"ipa_real"` IPA 실유체 등엔트로피(HEM), `"n2o_dyer"` 아산화질소 Dyer |
+| `mdot_kg_s` | 필수 | 이 추진제의 전체 유량 |
+| `T_K`, `P_up_bar` | 필수 (`from_regen`이면 생략) | 오리피스 상류 온도, 압력 |
+| `from_regen` | false | 상류 상태를 1D 냉각 해석의 채널 출구(출구 손실 뒤)에서 가져옴 |
+| `dP_feed_bar` | 0 | `from_regen`일 때 채널 출구와 오리피스 사이 손실 |
+| `rho_kg_m3` | 냉각제 물성표 | `spi`의 밀도 |
+| `Cd` | 0.75 | 유량계수 |
+| `n_holes` | 1 | 같은 크기 구멍 수 |

@@ -7,7 +7,7 @@ import tomllib
 
 import numpy as np
 
-from . import fluids, solver1d
+from . import boiling, fluids, solver1d
 from .channel import ChannelDesign, knots_fun
 from .contour import Contour
 from .fe2d import Material
@@ -32,6 +32,7 @@ class Case:
         self.dx = float(c.get("dx_mm", 0.25))
         self.C_hg = float(c.get("C_hg", 1.0))
         self.p_amb = float(c.get("p_ambient_bar", 1.01325)) * 1e5
+        self.axial = bool(c.get("axial_conduction", False))
         self.out_dir = out_dir or os.path.join("results", self.name)
         self.contour = self._contour(cfg["contour"])
         k = cfg["coolant"]
@@ -43,6 +44,8 @@ class Case:
         if k.get("fluid", "isopropanol").lower() == "csv":
             k = dict(k, table=self._path(k["table"]))
         self.fluid = fluids.make(k, self.Pin)
+        self._sat_cfg = k
+        self._sat = False
         self.material = Material.from_cfg(cfg.get("material", {}))
         lim = cfg.get("limits", {})
         self.dP_max = lim.get("dP_max_bar")
@@ -171,7 +174,26 @@ class Case:
     def solve(self, D=None, mdot=None, C_hg=None, G=None):
         return solver1d.solve(D or self.design(), self.contour, self.gas, self.fluid,
                               self.mdot if mdot is None else mdot, self.Tin, self.Pin, self.ks, self.K_in, self.K_out,
-                              self.C_hg if C_hg is None else C_hg, self.material.k, self.dx, G=G, GG=self.gas_grid())
+                              self.C_hg if C_hg is None else C_hg, self.material.k, self.dx, G=G, GG=self.gas_grid(),
+                              axial=self.axial)
+
+    @property
+    def saturation(self):
+        """Coolant saturation table for the boiling checks (None if not available)."""
+        if self._sat is False:
+            self._sat = boiling.make(self._sat_cfg, self.fluid, self._path)
+        return self._sat
+
+    def boiling(self, res):
+        """Boiling margins (None if no saturation data or the channels stay above the critical pressure)."""
+        sat = self.saturation
+        if sat is None or float(res["P"].min()) >= sat.Pc:
+            return None
+        return boiling.check(res, sat)
+
+    def regen_outlet(self, res):
+        """Coolant state after the channel outlet loss (feeds the fuel injector)."""
+        return dict(Tout=float(res["Tout"]), P_out_bar=float(res["P"][0] / 1e5 - res["dP_out"]))
 
     def metrics(self, res):
         return solver1d.metrics(res, self.contour, self.fluid)
@@ -193,8 +215,8 @@ class Case:
                  "coolant: %s, mdot %.4f kg/s, Tin %.1f K, Pin %.2f bar, ks %.0f um, K_in %.2f, K_out %.2f"
                  % (self.fluid.name, self.mdot, self.Tin, self.Pin / 1e5, self.ks * 1e6, self.K_in, self.K_out)]
         D = self.design()
-        lines.append("channels: %d x %s, Neff %.2f, lands %d x %.1f deg, helix %s" % (
-            D.nch, D.shape, D.Neff, D.NL, D.land, "yes" if D.beta_fun else "axial"))
+        lines.append("channels: %d x %s, Neff %.2f, lands %d x %.1f deg, helix %s, axial wall conduction %s" % (
+            D.nch, D.shape, D.Neff, D.NL, D.land, "yes" if D.beta_fun else "axial", "on" if self.axial else "off"))
         if self.fluid.Pc:
             lines.append("coolant critical pressure %.2f bar -> P_min limit %s bar" % (
                 self.fluid.Pc / 1e5, "%.2f" % self.P_min if self.P_min else "-"))

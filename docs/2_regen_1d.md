@@ -66,7 +66,7 @@ t, s, β는 상수 또는 `[[x_mm, 값], ...]` 표로 줍니다. 표는 PCHIP으
 
   t_eff의 0.107d 항은 둥근 채널 바닥 때문에 늘어난 평균 전도 거리를 근사합니다.
 - **벽온도 반복**: Twg와 Twc(냉각제 쪽 벽온도)를 고정점 반복으로 풉니다. 이완은 0.6/0.4, 수렴 기준은 0.05 K,
-  최대 60회입니다. hg의 σ(Twg)와 냉각제 벽면 물성이 벽온도에 의존하기 때문에 반복이 필요합니다.
+  최대 80회입니다. hg의 σ(Twg)와 냉각제 벽면 물성이 벽온도에 의존하기 때문에 반복이 필요합니다.
 - **에너지 보존**: 냉각제는 온도가 아니라 엔탈피로 진행합니다.
 
       H ← H + q′ · N_eff / n · dx / ṁ_ch
@@ -153,7 +153,13 @@ Re, Pr은 bulk 온도의 물성으로 계산하고, 수력직경은 D_h = 4A/P�
 `solution_1d.csv`의 열은 다음과 같습니다.
 
 `x_mm, r_hot_mm, t_mm, s_mm, beta_deg, pitch_mm, web_mm, n_sub, Tb_K, P_bar, p_gas_bar, Taw_K, Twg_K, Twc_K,
-q_MW_m2, hg_W_m2K, hc_W_m2K, Re, v_m_s, Dh_mm, eta_fin, Dean_factor, turbulent`
+q_MW_m2, q_cool_MW_m2, hg_W_m2K, hc_W_m2K, Re, v_m_s, Dh_mm, eta_fin, Dean_factor, turbulent`
+
+- `q_MW_m2`는 가스 쪽 열유속 hg(Taw − Twg), `q_cool_MW_m2`는 냉각제가 받는 열을 같은 고온벽 면적으로 나눈
+  값입니다. 축방향 전도를 끄면 둘이 같고, 켜면 벽이 축방향으로 옮긴 열만큼 다릅니다.
+- 축방향 전도를 켜면 `Twg_no_axial_K` (첫 행진, 축방향 전도 없음)가 붙습니다.
+- 채널 압력이 임계압 아래로 내려가는 곳이 있으면 끓음 판정 열(`Tsat_K, Tsat_margin_K, q_c_MW_m2, r_onb,
+  q_chf_MW_m2, r_chf, r_chf_bound, boil_flag`)이 붙고 `boiling.png`가 생깁니다 (2.9절).
 
 `summary.json`의 `metrics`는 다음을 담습니다.
 
@@ -162,14 +168,83 @@ q_MW_m2, hg_W_m2K, hc_W_m2K, Re, v_m_s, Dh_mm, eta_fin, Dean_factor, turbulent`
 - ΔP (전체/채널), 채널 출구 압력, 최대 유속, 최소 Re, 층류 비율
 - 최소 web, 최대 폭, 최소 s, 최대 나선각
 - 임계압·포화 여유
+- 축방향 전도를 켜면: 반복 횟수, 수렴 여부, 축방향 전도 없는 최대 Twg, 가스 쪽 총 열량 `Qg_kW`
+- `summary.json`의 `boiling`: 끓음 판정 요약 (2.9절), `axial_hist`: 축방향 반복 기록
 
 ## 2.7 한계
 
-- 축방향 벽 열전도와 원주방향 불균일 가열을 무시합니다 (국소 1D 열저항).
+- 원주방향 불균일 가열(혼합비 줄무늬, 랜드 옆 채널)은 다루지 않습니다.
+- 축방향 벽 열전도는 기본으로 꺼져 있습니다 (2.8절). 끄면 국소 1D 열저항이라, 열저항이 x 방향으로 갑자기 바뀌는
+  곳(아래 물성 보정 전환점, 형상 접선점)에서 Twg가 계단처럼 변합니다.
 - 물성 보정이 T_b = 0.9 T_pc에서 점도비 → Jackson으로 바뀌어 Twg가 계단처럼 변할 수 있습니다.
   원래 검증된 모델과 같게 두려고 일부러 섞지 않았습니다. 이 근처 결과는 두 식의 차이만큼 불확도가 있다고 보세요.
+  축방향 전도를 켜면 계단이 벽 두께의 몇 배 길이로 퍼집니다.
+- 끓음은 판정만 하고, 열전달 계산 자체는 단상입니다 (2.9절).
 - 매개변수 윤곽의 원호와 직선이 만나는 곳에서는 곡률이 불연속이라 Dean 인자 때문에 hc에 작은 계단이 생깁니다.
 - 채널 사이의 유량 불균일은 이 해석에 없고, [4장](4_design_studies.md)의 공차·매니폴드 연구에서 다룹니다.
+
+## 2.8 축방향 벽 열전도 (`axial_conduction = true` 또는 `--axial`)
+
+기본 1D 행진은 각 x 위치를 고립된 가스–벽–냉각제 열저항으로 풉니다. 그래서 국소 열저항이 x 방향으로 갑자기 바뀌면
+(물성 보정 전환, 원호–직선 접선점, 채널 크기 꺾임) 그 계단이 Twg에 그대로 나타납니다. 실제 벽은 구리처럼 열전도도가
+높으면 축방향으로 열을 퍼뜨려 이런 계단을 벽 두께 몇 배 길이로 완만하게 만듭니다.
+
+**전역 벽 회로.** 행진이 끝나면 모든 위치의 (Twg_j, Twc_j)를 한 번에 푸는 선형 회로를 만듭니다.
+
+- 각 위치의 가스 a = hg·A_hot, 벽 b = k_w·A_mid/t_eff, 냉각제 c = hc·A_wet 전도도(W/K)는 직전 행진의 값으로 고정합니다.
+- 이웃한 위치 j, j+1 사이에 축방향 전도도를 둡니다.
+  - **고온벽 판(slab)**: K_s = k_w · (w_mid · t) / L_mid. w_mid는 벽 두께 중앙의 피치 폭,
+    L_mid는 벽 중앙면(윤곽을 법선 방향으로 t/2만큼 옮긴 곡선)의 자오선 길이입니다.
+    두께 방향은 쌍선형 요소 하나로 보고, 축방향 열을 고온 쪽·냉각제 쪽 절점에 1/3, 1/6 가중치로 나눕니다.
+  - **채널 사이 고체**(리브, 랜드, web): K_r = k_w · A_sol · cos β / L_path. A_sol = 피치 × 채널 높이 − 채널 단면적.
+    나선 채널에서는 고체가 채널 경로를 따라 이어지므로 자오선 방향 전도도에 cos β가 곱해집니다.
+    고체의 평균 온도를 Tb + η_fin(Twc − Tb)로 보고(핀 온도 분포의 평균), 그 축방향 열을 냉각제 쪽 절점에 넣습니다.
+- 양 끝은 단열입니다. 냉각제 출구 위치(분사기 쪽 끝)도 포함해 끝에 인위적인 계단이 생기지 않게 합니다.
+
+**행진과의 결합.** 전역 해와 행진 해가 같아질 때까지 반복합니다.
+
+1. 첫 행진은 축방향 전도 없이 풉니다.
+2. 전역 회로를 풀고, 행진 Twg와의 최대 차이가 `ax_tol` (0.3 K)보다 작으면 끝냅니다.
+3. 아니면 이웃 위치의 온도를 전역 해로 고정하고, 각 위치 자신의 온도는 2×2 회로 안에서 음해(implicit)로 두어 다시
+   행진합니다. 축방향 전도도가 국소 회로보다 훨씬 큰 곳(얇은 벽, 낮은 hc)에서도 안정적입니다.
+4. 이웃 온도는 Aitken 동적 이완(Irons–Tuck, ω ∈ [0.1, 1.5])으로 갱신합니다. 벽면 물성 보정 때문에 hc가 벽온도에
+   의존해 단순 대입(Picard)은 주기 2로 진동할 수 있는데, Aitken은 이를 막습니다. 데모 엔진은 6회 안에 수렴합니다.
+
+**에너지.** 축방향 열은 위치 사이에서 주고받기만 하므로 전체 합은 0입니다. 그래서 가스 쪽 총 열량 `Qg_kW`와 냉각제가
+받은 총 열량 `Q_kW`가 거의 같습니다 (출구 끝 위치의 작은 차이만 남음).
+
+**비용과 사용처.** 1D 해석이 약 6배 느려집니다 (데모 0.1 → 0.7초). 설계 반복(최적화)에는 끄고, 최종 확인과
+Twg 계단이 문제 되는 곳에서 켜는 것을 권합니다. `optimize`, `tolerance`, `manifold`에서도 켜면 그대로 적용됩니다.
+
+**근사.** 핀 안의 열이 핀 높이를 따라 어떻게 냉각제로 빠지는지는 평균 효율 하나로 줄였습니다. 원주 방향 전도와
+덮개(jacket) 쪽 전도는 없습니다. 벽 단면의 온도 분포가 중요하면 [3장](3_thermal_stress_2d.md)의 2D 단면 해석을 함께 보세요.
+
+## 2.9 끓음 여유 판정
+
+내장 IPA 물성표는 한 압력에서 만든 단상 물성이라 끓음을 계산하지 못합니다. 채널 압력이 냉각제 임계압 아래로 내려가는
+위치가 있으면, `run`이 냉각제 쪽 벽(채널 바닥, Twc)을 그 위치 압력의 포화 상태와 비교해 판정만 합니다.
+
+| 항목 | 식 | 불확도 |
+|---|---|---|
+| 포화 여유 | Tsat(P) − Twc. 양수면 벽에서 증기가 생기지 않음 | 포화선 ±1–2 K |
+| 핵비등 시작 (ONB) | Davis–Anderson: ΔT_ONB = √(8σ·Tsat·v_fg·q_c / (k_l·h_fg)), r_onb = (Twc − Tsat)/ΔT_ONB | ±40 % |
+| CHF (최선 추정) | Hall–Mudawar (2000) 과냉 유동비등: q_CHF = G·h_fg·0.0722·We^−0.312·(ρ_f/ρ_g)^−0.644·[1 − 0.900·(ρ_f/ρ_g)^0.724·x_e], We = G²D_h/(ρ_f σ) | ±50 % (물 자료 외삽) |
+| CHF (하한) | Zuber 풀비등 × Ivey–Morris 과냉 인자: q_Z = 0.131·ρ_g^½·h_fg·[σg(ρ_f − ρ_g)]^¼·[1 + 0.1·(ρ_f/ρ_g)^0.75·c_p,l·ΔT_sub/h_fg] | ±35 % |
+
+- q_c = hc(Twc − Tb)는 채널 바닥의 냉각제 쪽 열유속, x_e = −c_p,l(Tsat − Tb)/h_fg는 평형 건도(과냉이면 음수)입니다.
+- **플래그**: 0 단상, 1 ONB 도달 (r_onb ≥ 1), 2 CHF 접근 = 벽이 Tsat 이상이면서
+  (q_c ≥ 0.5 q_CHF,최선 또는 q_c ≥ q_CHF,하한). 벽이 Tsat보다 낮으면 증기가 생기지 않으므로 q_c/q_CHF가 커도
+  소손 위험으로 보지 않습니다.
+- **포화 물성** (`regencool/boiling.py`):
+  - IPA 내장: Lee–Kesler 증기압을 뒤집은 Tsat, Watson 잠열 (정상 끓는점 기준), DIPPR형 액체 밀도·전도도·비열,
+    Peng–Robinson 증기 근의 증기 밀도, 대응상태 표면장력 σ ∝ (Tc − T)^(11/9).
+  - 다른 냉각제: `[coolant] saturation_table`에 압력별 포화 물성 CSV를 줍니다 ([설정 키](config_reference.md#coolant)).
+  - 임계압 이상이거나 h_fg < 1 kJ/kg인 위치는 건너뜁니다.
+
+**해석.** 정상 운전에서 채널 압력이 임계압보다 높으면 판정은 비어 있습니다. 임계압 아래로 내려가는 설계(낮은 공급
+압력, 시동·정지 과도)라면 이 판정이 0이어야 단상 결과를 믿을 수 있습니다. 1이나 2가 나오면 이 위치의 Twg는
+단상 해석 결과일 뿐이고, 실제로는 핵비등으로 좋아지거나 막비등·근임계 열전달 악화로 크게 나빠질 수 있습니다.
+특히 임계압 바로 아래(0.9–1.0 Pc)는 h_fg와 σ가 0으로 가므로 판정 자체의 불확도가 큽니다.
 
 ## 참고문헌
 
@@ -194,3 +269,13 @@ q_MW_m2, hg_W_m2K, hc_W_m2K, Re, v_m_s, Dh_mm, eta_fin, Dean_factor, turbulent`
 - Lee, B. I., Kesler, M. G., "A generalized thermodynamic correlation based on three-parameter
   corresponding states," *AIChE J.* 21, 1975.
 - Poling, B. E., Prausnitz, J. M., O'Connell, J. P., *The Properties of Gases and Liquids*, 5th ed., McGraw-Hill, 2001.
+- Irons, B. M., Tuck, R. C., "A version of the Aitken accelerator for computer iteration," *Int. J. Numer. Meth.
+  Eng.* 1, 1969; Küttler, U., Wall, W. A., "Fixed-point fluid-structure interaction solvers with dynamic relaxation,"
+  *Comput. Mech.* 43, 2008.
+- Davis, E. J., Anderson, G. H., "The incipience of nucleate boiling in forced convection flow," *AIChE J.* 12, 1966.
+- Hall, D. D., Mudawar, I., "Critical heat flux (CHF) for water flow in tubes — II. Subcooled CHF correlations,"
+  *Int. J. Heat Mass Transfer* 43, 2000.
+- Zuber, N., "Hydrodynamic aspects of boiling heat transfer," AEC Report AECU-4439, 1959;
+  Ivey, H. J., Morris, D. J., "On the relevance of the vapour–liquid exchange mechanism for sub-cooled boiling heat
+  transfer at high pressure," UKAEA AEEW-R 137, 1962.
+- Watson, K. M., "Thermodynamics of the liquid state," *Ind. Eng. Chem.* 35, 1943.

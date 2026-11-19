@@ -5,6 +5,8 @@
   optimize   channel-size distribution s(x) for minimum hot-wall temperature under dP / pressure limits
   tolerance  uniform and single-channel manufacturing offsets
   manifold   ring-header flow distribution + per-channel tolerance Monte Carlo
+  radiation  hot-gas radiation estimate on top of the 1D solution
+  injector   orifice sizing from [injector] (SPI, real-fluid IPA, N2O Dyer), optionally fed by the regen outlet
 """
 import argparse
 import csv
@@ -14,7 +16,7 @@ import time
 
 import numpy as np
 
-from . import plots, solver1d, station2d
+from . import boiling, plots, solver1d, station2d
 from .case import Case, jsonable
 
 
@@ -28,6 +30,20 @@ def _fmt_metrics(m):
         s += "\n  exit P - coolant Pc = %+.2f bar" % m["P_over_Pc"]
     if "psat_margin" in m:
         s += ", min (P - psat) = %.2f bar" % m["psat_margin"]
+    if "Twg_noax" in m:
+        s += "\n  axial wall conduction: %d iterations (%s), max Twg without it %.0f C" % (
+            m["axial_iterations"], "converged" if m["axial_converged"] else "NOT converged", m["Twg_noax"])
+    return s
+
+
+def _fmt_boiling(bs):
+    s = ("  boiling check (%d stations below Pc): min Tsat - Twc %.1f K at x = %.1f mm, max (Twc - Tsat)/dT_ONB %.2f, "
+         "max q_c/q_CHF %.3f (bound %.3f) -> flag %d"
+         % (bs["subcritical_stations"], bs["Tsat_margin_min"], bs["x_Tsat_margin"], bs["r_onb_max"], bs["r_chf_max"],
+            bs["r_chf_bound_max"], bs["flag_max"]))
+    for f, lab in ((1, "ONB"), (2, "CHF approach")):
+        if "x_flag%d" % f in bs:
+            s += "\n    %s: x = %.1f .. %.1f mm" % ((lab,) + tuple(bs["x_flag%d" % f]))
     return s
 
 
@@ -62,11 +78,20 @@ def cmd_run(case, a):
     m = case.metrics(res)
     print("1D solution (C_hg %.2f, %.1f s):" % (case.C_hg, time.time() - t0))
     print(_fmt_metrics(m))
-    solver1d.to_csv(res, os.path.join(case.out_dir, "solution_1d.csv"))
+    b = case.boiling(res)
+    extra = None
+    out_b = None
+    if b is not None:
+        out_b = boiling.summary(b, res["x"])
+        print(_fmt_boiling(out_b))
+        extra = boiling.csv_columns(b)
+        plots.boiling(case, res, b, os.path.join(case.out_dir, "boiling.png"))
+    solver1d.to_csv(res, os.path.join(case.out_dir, "solution_1d.csv"), extra)
     plots.geometry(case, res, os.path.join(case.out_dir, "geometry.png"))
     plots.solution(case, res, os.path.join(case.out_dir, "solution_1d.png"),
                    case.cfg.get("limits", {}).get("Twg_max_C"))
-    out = dict(metrics=m, nozzle=case.nozzle_flow_check(), dh_fuel_kJkg=case.dh_fuel / 1e3, T0=case.gas.T0)
+    out = dict(metrics=m, nozzle=case.nozzle_flow_check(), dh_fuel_kJkg=case.dh_fuel / 1e3, T0=case.gas.T0,
+               boiling=out_b, axial_hist=res.get("axial_hist"))
     if not a.no_stress:
         st_cfg = case.cfg.get("stress", {})
         D = case.design()
@@ -158,21 +183,76 @@ def cmd_manifold(case, a):
                      monte_carlo=[{k: v for k, v in r.items() if not k.startswith("_")} for r in res]))
 
 
+def cmd_radiation(case, a):
+    from . import radiation as RD
+    print(case.describe())
+    res = case.couple()
+    rc = case.cfg.get("radiation", {})
+    if "X_H2O" in rc or "X_CO2" in rc:
+        xw, xc = rc.get("X_H2O", 0.0), rc.get("X_CO2", 0.0)
+    elif hasattr(case.gas, "table"):
+        X = case.gas.table["chamber"]["X"]
+        xw, xc = X.get("H2O", 0.0), X.get("CO2", 0.0)
+    else:
+        raise SystemExit("[radiation] needs X_H2O and X_CO2 with the ideal-gas model")
+    ew = rc.get("eps_wall", 0.8)
+    T_clip = rc.get("T_clip_K", 2500.0)
+    GG = case.gas_grid()
+    rads = {"clipped %.0f K" % T_clip: RD.estimate(res, GG, xw, xc, ew, T_clip)}
+    if rc.get("extrapolate", True):
+        rads["extrapolated"] = RD.estimate(res, GG, xw, xc, ew, None)
+    print("radiation: X_H2O %.3f, X_CO2 %.3f, wall emissivity %.2f, beam length 0.9 D" % (xw, xc, ew))
+    for lab, r in rads.items():
+        print("  %-16s Q_rad %.2f kW (convective %.1f kW), max q_rad %.2f MW/m2, max q_rad/q %.3f, "
+              "max dTwg %.1f K at x = %.1f mm -> max Twg %.0f C"
+              % (lab, r["Q_rad_kW"], res["Qg_kW"], r["q_rad_max"] / 1e6, r["ratio_max"], r["dTwg_max"],
+                 r["x_dTwg_max"], r["Twg_max_with_rad"]))
+    plots.radiation(case, res, rads, os.path.join(case.out_dir, "radiation.png"))
+    _write_json(os.path.join(case.out_dir, "radiation.json"),
+                dict(X_H2O=xw, X_CO2=xc, eps_wall=ew, x=res["x"], cases=rads))
+
+
+def cmd_injector(case, a):
+    from . import injector as INJ
+    print(case.describe())
+    ic = case.cfg.get("injector")
+    if not ic:
+        raise SystemExit("no [injector] table in the case file")
+    P2 = ic.get("P_chamber_bar", case.cfg["gas"]["pc_bar"]) * 1e5
+    regen = None
+    if any(isinstance(v, dict) and v.get("from_regen") for v in ic.values()):
+        regen = case.regen_outlet(case.couple())
+        print("regen outlet: T %.1f K, P %.2f bar" % (regen["Tout"], regen["P_out_bar"]))
+    out = {}
+    for name, e in ic.items():
+        if not isinstance(e, dict):
+            continue
+        r = INJ.size(e, P2, case.fluid, regen)
+        out[name] = r
+        print("  %-10s %-8s T1 %.1f K, P1 %.2f bar -> %.2f bar: G %.0f kg/m2/s, Cd %.2f, %d x d %.3f mm%s"
+              % (name, r["model"], r["T1_K"], r["P1_bar"], r["P2_bar"], r["G"], r["Cd"], r["n_holes"], r["d_mm"],
+                 " (choked)" if r["info"].get("choked") else ""))
+    _write_json(os.path.join(case.out_dir, "injector.json"), out)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="python -m regencool", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("command", choices=["gas", "run", "optimize", "tolerance", "manifold"])
+    p.add_argument("command", choices=["gas", "run", "optimize", "tolerance", "manifold", "radiation", "injector"])
     p.add_argument("case", help="case TOML file")
     p.add_argument("-o", "--out", help="output folder (default results/<case name>)")
     p.add_argument("--C-hg", type=float, default=None, help="Bartz multiplier (overrides [case] C_hg)")
     p.add_argument("--no-stress", action="store_true", help="run: skip the 2D stations")
+    p.add_argument("--axial", action="store_true", help="couple axial wall conduction (overrides [case])")
     a = p.parse_args(argv)
     case = Case.load(a.case, a.out)
     if a.C_hg is not None:
         case.C_hg = a.C_hg
+    if a.axial:
+        case.axial = True
     os.makedirs(case.out_dir, exist_ok=True)
-    dict(gas=cmd_gas, run=cmd_run, optimize=cmd_optimize, tolerance=cmd_tolerance, manifold=cmd_manifold)[a.command](
-        case, a)
+    dict(gas=cmd_gas, run=cmd_run, optimize=cmd_optimize, tolerance=cmd_tolerance, manifold=cmd_manifold,
+         radiation=cmd_radiation, injector=cmd_injector)[a.command](case, a)
 
 
 if __name__ == "__main__":

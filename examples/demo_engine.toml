@@ -8,6 +8,7 @@ name = "demo_engine"
 dx_mm = 0.25            # axial step of the 1D march
 C_hg = 1.0              # multiplier on Bartz h_g (calibrate against test data / CFD when available)
 p_ambient_bar = 1.01325
+axial_conduction = false   # true: couple axial wall conduction (smooths steps, ~6x slower); CLI --axial
 
 [contour]               # hot-gas wall, x = 0 at the injector face
 type = "parametric"     # or "csv" with file = "my_contour.csv" (columns x_mm, r_mm)
@@ -95,3 +96,29 @@ mf_grid = [0.5, 1.4, 0.1]
 sigma_mm = [0.025, 0.05]          # per-channel size scatter (normal, std dev)
 mean_mm = [0.0]
 samples = 2000
+
+[radiation]             # python -m regencool radiation (estimate on top of the 1D solution)
+X_H2O = 0.30            # mole fractions in the chamber (Cantera cases take them from the chamber state)
+X_CO2 = 0.15
+eps_wall = 0.8
+T_clip_K = 2500.0       # Leckner correlations are fitted up to 2500 K
+extrapolate = true      # also report the extrapolated values
+
+[injector]              # python -m regencool injector
+# P_chamber_bar = 25.0  # default: gas.pc_bar
+
+[injector.fuel]
+model = "ipa_real"      # real-fluid isentropic orifice (captures choking of the hot regen outlet)
+from_regen = true       # upstream state = coolant channel outlet ...
+dP_feed_bar = 0.5       # ... minus feed / collector losses
+mdot_kg_s = 0.16
+Cd = 0.8
+n_holes = 8
+
+[injector.oxidizer]
+model = "n2o_dyer"      # self-pressurising nitrous oxide (Dyer NHNE); "spi" for a subcooled liquid
+mdot_kg_s = 0.62
+T_K = 273.15            # liquid, vapour pressure ~31 bar < P_up
+P_up_bar = 36.0
+Cd = 0.7
+n_holes = 8
